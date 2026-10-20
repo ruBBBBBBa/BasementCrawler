@@ -18,7 +18,7 @@ R_HIT, R_DEATH, R_STEP = -3.0, -10.0, -0.01
 
 
 class CrawlerV1Env(gym.Env):
-    metadata = {"render_modes": ["ansi", "rgb_array"], "render_fps": 6}
+    metadata = {"render_modes": ["human", "rgb_array", "ansi"], "render_fps": 6}
 
     def __init__(self, n_enemies=3, enemy_move_prob=0.5, tear_speed=2,
                  tear_range=4, fire_delay=2, hearts=3, render_mode=None):
@@ -32,6 +32,8 @@ class CrawlerV1Env(gym.Env):
         # + one navigation state per agent cell once the room is clear
         self.observation_space = spaces.Discrete(self.combat_n + SIZE * SIZE)
         self.action_space = spaces.Discrete(9)
+        self._renderer = None                 # pygame graphics, created on first render
+        self.render_hint = False              # play.py sets this to show "R: play again"
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)              # seeds self.np_random
@@ -42,6 +44,7 @@ class CrawlerV1Env(gym.Env):
                if abs(r - START[0]) + abs(c - START[1]) >= 3]
         idx = self.np_random.choice(len(far), size=self.n_enemies, replace=False)
         self.enemies = [far[i] for i in idx]  # (row, col) of living enemies
+        self._render_human()
         return self._get_obs(), self._info()
 
     def step(self, action):
@@ -54,6 +57,7 @@ class CrawlerV1Env(gym.Env):
             self.tear = [self.agent, action - 4, self.tear_range]
             self.cooldown = self.fire_delay
         if self.exited:
+            self._render_human()
             return self._get_obs(), reward + R_EXIT, True, False, self._info()
         reward += self._advance_tear()                          # 3. tear flies
         reward += self._move_enemies()                          # 4. enemies chase
@@ -63,6 +67,7 @@ class CrawlerV1Env(gym.Env):
         terminated = self.hearts <= 0
         if terminated:
             reward += R_DEATH
+        self._render_human()
         return self._get_obs(), reward, terminated, False, self._info()
 
     def _move_agent(self, d):
@@ -70,13 +75,28 @@ class CrawlerV1Env(gym.Env):
         nr, nc = r + DIRS[d][0], c + DIRS[d][1]
         if not (0 <= nr < SIZE and 0 <= nc < SIZE):
             if self.cleared and self.agent == DOOR_CELLS[d]:
-                self.exited = True                    # walked through an open door
+                return self._use_door(d)              # walked through an open door
             return 0.0                                # otherwise bumped a wall
+        if self._blocked((nr, nc)):
+            return 0.0
         if (nr, nc) in self.enemies:
             self.hearts -= 1                          # touching an enemy hurts
             return R_HIT
         self.agent = (nr, nc)
         return 0.0
+
+    def _use_door(self, d):
+        self.exited = True
+        return 0.0
+
+    def _blocked(self, cell):
+        """Cells inside the room that stop movement and tears (rocks from v2)."""
+        return False
+
+    def _hit(self, cell):
+        """A tear struck the enemy at `cell`."""
+        self.enemies.remove(cell)
+        return R_KILL
 
     def _advance_tear(self):
         if self.tear is None:
@@ -85,13 +105,13 @@ class CrawlerV1Env(gym.Env):
         for _ in range(self.tear_speed):              # one cell at a time: no tunnelling
             r, c = r + DIRS[d][0], c + DIRS[d][1]
             left -= 1
-            if not (0 <= r < SIZE and 0 <= c < SIZE) or (left == 0 and (r, c) not in self.enemies):
+            if (not (0 <= r < SIZE and 0 <= c < SIZE) or self._blocked((r, c))
+                    or (left == 0 and (r, c) not in self.enemies)):
                 self.tear = None
                 return 0.0
             if (r, c) in self.enemies:
-                self.enemies.remove((r, c))
                 self.tear = None
-                return R_KILL
+                return self._hit((r, c))
         self.tear = [(r, c), d, left]
         return 0.0
 
@@ -110,12 +130,11 @@ class CrawlerV1Env(gym.Env):
             if target == self.agent:
                 self.hearts -= 1                      # bump: enemy stays put
                 reward += R_HIT
-            elif target not in self.enemies:          # enemies never share a cell
+            elif target not in self.enemies and not self._blocked(target):  # no sharing cells
                 self.enemies[self.enemies.index(enemy)] = target
                 if self.tear is not None and self.tear[0] == target:
-                    self.enemies.remove(target)       # walked into the tear
-                    self.tear = None
-                    reward += R_KILL
+                    self.tear = None                  # walked into the tear
+                    reward += self._hit(target)
         return reward
 
     def _get_obs(self):
@@ -138,8 +157,20 @@ class CrawlerV1Env(gym.Env):
     def render(self):
         if self.render_mode == "ansi":
             return self._render_text()
-        if self.render_mode == "rgb_array":
-            return self._render_rgb()
+        if self.render_mode in ("human", "rgb_array"):
+            if self._renderer is None:
+                from .render import Renderer          # pygame is only needed for graphics
+                self._renderer = Renderer(self.render_mode, self.metadata["render_fps"])
+            return self._renderer.draw(self)
+
+    def _render_human(self):
+        if self.render_mode == "human":
+            self.render()
+
+    def close(self):
+        if self._renderer is not None:
+            self._renderer.close()
+            self._renderer = None
 
     def _render_text(self):
         door = "." if self.cleared else "+"
@@ -159,25 +190,3 @@ class CrawlerV1Env(gym.Env):
         rows.append("#" * 3 + door + "#" * 3)
         rows.append(f"hearts {self.hearts}  enemies {len(self.enemies)}  cooldown {self.cooldown}")
         return "\n".join(rows)
-
-    def _render_rgb(self):
-        s = 48
-        img = np.zeros((7 * s, 7 * s, 3), dtype=np.uint8)
-        img[:] = (60, 50, 45)                                     # walls
-        img[s:6 * s, s:6 * s] = (205, 185, 150)                   # floor
-        door = (20, 20, 20) if self.cleared else (120, 70, 30)
-        for r, c in [(0, 3), (6, 3), (3, 0), (3, 6)]:
-            img[r * s:(r + 1) * s, c * s:(c + 1) * s] = door
-
-        def box(cell, color, pad):
-            y, x = (cell[0] + 1) * s, (cell[1] + 1) * s
-            img[y + pad:y + s - pad, x + pad:x + s - pad] = color
-
-        for e in self.enemies:
-            box(e, (190, 40, 40), 8)
-        box(self.agent, (60, 110, 200), 6)
-        if self.tear is not None:
-            box(self.tear[0], (120, 220, 255), 18)
-        for i in range(self.hearts):                              # hearts, top-left
-            img[12:36, 12 + i * 30:36 + i * 30] = (220, 30, 60)
-        return img

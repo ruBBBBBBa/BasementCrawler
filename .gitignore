@@ -5,3 +5,7 @@ __pycache__/
 runs/
 videos/
 *.npy
+.claude/
+AGENTS.md
+CLAUDE.md
+coordination/
