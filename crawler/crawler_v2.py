@@ -22,6 +22,7 @@ from .crawler_v1 import (CrawlerV1Env, DOOR_CELLS, DIRS, SIZE, START,
 
 #Rewards for v2
 R_ENTER, R_BOSS, R_FLOOR = 0.5, 10.0, 20.0
+R_STEP_V2 = -0.05   # stalling forever costs -5 (discounted) instead of -1
 
 OPPOSITE = {0: 1, 1: 0, 2: 3, 3: 2}
 TRAPDOOR = (2, 2)
@@ -58,12 +59,13 @@ def build_doors(rooms, edges):
 
 #The second version inherits from the first one
 class CrawlerV2Env(CrawlerV1Env):
-    def __init__(self, hearts=3, enemy_move_prob=0.5, enter_reward=R_ENTER,
+    def __init__(self, hearts=3, enemy_move_prob=0.5, enter_reward=R_ENTER, step_reward=R_STEP_V2,
                  rooms=ROOMS, edges=EDGES, start_room=START_ROOM, boss_room=BOSS_ROOM,
                  render_mode=None, **kwargs):
         assert 1 <= hearts <= 3, "v2 observation encodes 1-3 hearts"
         super().__init__(n_enemies=1, enemy_move_prob=enemy_move_prob, hearts=hearts,
                          render_mode=render_mode, **kwargs)
+        self.step_reward = step_reward
         self.enter_reward = enter_reward
         self.rooms, self.start_room, self.boss_room = rooms, start_room, boss_room
         self.doors = build_doors(rooms, edges)
@@ -88,7 +90,7 @@ class CrawlerV2Env(CrawlerV1Env):
 
     #Main controller of the game (v2)
     def step(self, action):
-        action, reward = int(action), R_STEP
+        action, reward = int(action), self.step_reward
         self.room_changed = False
         if self.cooldown > 0:
             self.cooldown -= 1
