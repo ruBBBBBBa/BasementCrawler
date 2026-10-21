@@ -1,16 +1,18 @@
-"""Basement Crawler v2: a fixed floor of five rooms, rocks, a 3-HP boss and a trapdoor.
+"""Basement Crawler v2
 
-Room mechanics (moves, tears, chasers, step order) are inherited from v1. New here:
-- the floor is a tree of rooms joined by doors; doors stay locked while enemies live;
+Room mechanics (moves, tears, chasers, step order) are inherited from v1. 
+This version adds:
+- the floor as a tree of rooms joined by doors; doors stay locked while enemies live;
 - rocks block the player, enemies and tears;
 - hearts carry over between rooms;
 - the boss room holds one boss with 3 HP; killing it opens a trapdoor in the room
-  centre, and stepping onto it completes the floor (the episode ends: v2 has one floor).
+  centre, and stepping onto it completes the floor.
 
-Observation (one integer, see _get_obs):
-- combat (enemies alive): cell x nearest-enemy offset x cooldown x enemies left
-  (boss HP in the boss room) x hearts                     -> 25*25*3*3*3 = 16,875
-- navigation (room clear): cell x a label per door x trapdoor open -> 25*4^4*2 = 12,800
+Observation:
+- combat (enemies alive): 
+    cell x nearest-enemy offset x cooldown x enemies left (boss HP in the boss room) x hearts
+- navigation (room clear): 
+    cell x a label per door x trapdoor open 
 """
 import numpy as np
 from gymnasium import spaces
@@ -18,35 +20,43 @@ from gymnasium import spaces
 from .crawler_v1 import (CrawlerV1Env, DOOR_CELLS, DIRS, SIZE, START,
                          R_CLEAR, R_DEATH, R_STEP)
 
+#Rewards for v2
 R_ENTER, R_BOSS, R_FLOOR = 0.5, 10.0, 20.0
+
 OPPOSITE = {0: 1, 1: 0, 2: 3, 3: 2}
 TRAPDOOR = (2, 2)
 WALL, EXPLORED, UNEXPLORED_BRANCH, BOSS_NEXT_ROOM = range(4)   # door labels
 
-# Rooms sit on a 5x5 floor grid (row, col). Each room: (enemies, rocks).
+# Rooms sit on a 5x5 floor grid (row, col) that represents the layout of the floor. 
+# Each room: (enemies, rocks).
 START_ROOM, BOSS_ROOM = (2, 2), (0, 3)
 ROOMS = {
-    (2, 2): (0, ()),                                   # start, empty
-    (2, 1): (1, ((1, 1), (3, 3))),                     # easy dead end
-    (1, 2): (2, ((1, 1), (1, 3), (3, 1), (3, 3))),     # medium, four pillars
-    (1, 3): (3, ((2, 2),)),                            # hard, centre rock
-    (0, 3): (1, ((1, 1), (1, 3))),                     # boss (the 1 enemy is the boss)
+    (2, 2): (0, ()),    # start, empty room --> [S]
+    (2, 1): (1, ((1, 1), (3, 3))),  # easy room: dead end --> [W]
+    (1, 2): (2, ((1, 1), (1, 3), (3, 1), (3, 3))),  # medium room: four rocks, two enemies --> [A]
+    (1, 3): (3, ((2, 2),)), # hard room: centre rock, three enemies --> [C]
+    (0, 3): (1, ((1, 1), (1, 3))),    # boss room: two rocks, one enemy (the boss) --> [B]
 }
-#   . . . B .        B boss   C hard   A medium
-#   . . A C .        S start  W easy
+#LAYOUT (still a fixed floor, yet to implement the random floor generator):
+
+#   . . . B . 
+#   . . A C .
 #   . W S . .
+
+#The edges gives pairs of room coordinates that share a door.
 EDGES = [((2, 2), (1, 2)), ((2, 2), (2, 1)), ((1, 2), (1, 3)), ((1, 3), (0, 3))]
 
 
 def build_doors(rooms, edges):
-    """{room: {direction: neighbour}} for an undirected list of edges."""
+    #converts undirected edges to a dictionary mapping each room’s direction to its neighboring room
+    #OPPOSITE maps N to S and W to E
     doors = {room: {} for room in rooms}
     for a, b in edges:
         d = DIRS.index((b[0] - a[0], b[1] - a[1]))   # rooms must be grid neighbours
         doors[a][d], doors[b][OPPOSITE[d]] = b, a
     return doors
 
-
+#The second version inherits from the first one
 class CrawlerV2Env(CrawlerV1Env):
     def __init__(self, hearts=3, enemy_move_prob=0.5, enter_reward=R_ENTER,
                  rooms=ROOMS, edges=EDGES, start_room=START_ROOM, boss_room=BOSS_ROOM,
@@ -60,10 +70,13 @@ class CrawlerV2Env(CrawlerV1Env):
         self.combat_dims = (SIZE * SIZE, 25, self.fire_delay + 1, 3, 3)
         self.combat_n = int(np.prod(self.combat_dims))
         self.nav_dims = (SIZE * SIZE, 4, 4, 4, 4, 2)
+        #rebuilds the observation space to include the navigation states (once the room is clear)
         self.observation_space = spaces.Discrete(self.combat_n + int(np.prod(self.nav_dims)))
 
+    #initialized room, visited, cleared, boss_hp, boss_defeated, floor_completed, room_changed before entering the start room
+    #important difference: visited tracks exploration and the one-time enter reward, cleared tracks which rooms have been cleared
     def reset(self, seed=None, options=None):
-        super(CrawlerV1Env, self).reset(seed=seed)     # seeds self.np_random
+        super(CrawlerV1Env, self).reset(seed=seed)  # seeds self.np_random
         self.agent, self.hearts, self.cooldown = START, self.max_hearts, 0
         self.tear, self.exited = None, False
         self.room, self.visited, self.cleared_rooms = self.start_room, {self.start_room}, set()
@@ -73,12 +86,13 @@ class CrawlerV2Env(CrawlerV1Env):
         self._render_human()
         return self._get_obs(), self._info()
 
+    #Main controller of the game (v2)
     def step(self, action):
         action, reward = int(action), R_STEP
         self.room_changed = False
-        if self.cooldown > 0:                                   # 1. cooldown ticks
+        if self.cooldown > 0:
             self.cooldown -= 1
-        if action < 4:                                          # 2. agent acts
+        if action < 4:
             reward += self._move_agent(action)
         elif action < 8 and self.cooldown == 0 and self.tear is None:
             self.tear = [self.agent, action - 4, self.tear_range]
@@ -86,10 +100,10 @@ class CrawlerV2Env(CrawlerV1Env):
         if self.floor_completed:
             self._render_human()
             return self._get_obs(), reward + R_FLOOR, True, False, self._info()
-        if not self.room_changed:                               # a new room starts calm
-            reward += self._advance_tear()                      # 3. tear flies
-            reward += self._move_enemies()                      # 4. enemies chase
-        if not self.enemies and not self.cleared:               # 5. checks
+        if not self.room_changed:
+            reward += self._advance_tear()
+            reward += self._move_enemies()
+        if not self.enemies and not self.cleared:
             self.cleared = True
             self.cleared_rooms.add(self.room)
             reward += R_CLEAR
@@ -99,9 +113,13 @@ class CrawlerV2Env(CrawlerV1Env):
         self._render_human()
         return self._get_obs(), reward, terminated, False, self._info()
 
-    # ------------------------------------------------------------ mechanics
+
+
+#NEW MECHANICS:
+
     def _enter(self, room, cell):
-        """Put the agent in `room` at `cell`; spawn enemies on the first visit."""
+        #Puts the agent in `room` at `cell`
+        #spawn enemies on the first visit. Once a room is cleared, it stays cleared (no enemy respawn)
         self.room, self.agent, self.tear = room, cell, None
         n, rocks = self.rooms[room]
         self.rocks = frozenset(rocks)
@@ -111,6 +129,7 @@ class CrawlerV2Env(CrawlerV1Env):
                     if (r, c) not in self.rocks and abs(r - cell[0]) + abs(c - cell[1]) >= 3]
             idx = self.np_random.choice(len(free), size=n, replace=False)
             self.enemies = [free[i] for i in idx]
+            #initializes the boss HP if the room is the boss room
             if room == self.boss_room:
                 self.boss_hp = 3
         if not self.enemies:
@@ -118,15 +137,21 @@ class CrawlerV2Env(CrawlerV1Env):
         self.cleared = room in self.cleared_rooms
 
     def _use_door(self, d):
+        #looks up the next room behind door d
         nxt = self.doors[self.room].get(d)
         if nxt is None:
-            return 0.0                                          # plain wall
+            return 0.0  # plain wall
+        #it checks whether is the first visit
         first = nxt not in self.visited
         self.visited.add(nxt)
+        #enters the next room through the door cell; entering from North puts the player in the South cell of the next room (for example)
         self._enter(nxt, DOOR_CELLS[OPPOSITE[d]])
         self.room_changed = True
+        #gives the reward if it's the first visit
         return self.enter_reward if first else 0.0
+    #a room change step intentionally skips the tear and enemy moves, the new room begins calmly for one turn
 
+#OLD MECHANICS (inherited from v1, but some methods are overridden):
     def _move_agent(self, d):
         before = self.agent
         reward = super()._move_agent(d)
@@ -135,9 +160,11 @@ class CrawlerV2Env(CrawlerV1Env):
             self.floor_completed = True
         return reward
 
+    #added the rocks collision
     def _blocked(self, cell):
-        return cell in self.rocks
+        return cell in self.rocks 
 
+    #added the boss hit logic
     def _hit(self, cell):
         if self.room != self.boss_room:
             return super()._hit(cell)
@@ -147,24 +174,28 @@ class CrawlerV2Env(CrawlerV1Env):
         self.enemies.remove(cell)
         self.boss_defeated = True
         return R_BOSS
-
+    
+    #added the trapdoor logic, where the trapdoor opens when the boss is defeated, and stepping on it completes the floor
     @property
     def trapdoor_open(self):
         return self.boss_defeated
 
-    # ---------------------------------------------------------- observation
-    def door_label(self, d):
-        """What lies behind door d of the current room.
+#OBSERVATION AND INFO
 
-        Precedence: WALL, then BOSS_NEXT_ROOM (the neighbour is the boss room), then
-        UNEXPLORED_BRANCH (any unvisited room in the subtree behind the door), else EXPLORED.
-        """
+    def door_label(self, d):
+        #What lies behind door d of the current room.
+
+        #WALL = 0: no door
+        #EXPLORED = 1: no unvisited rooms in that branch behind that door
+        #UNEXPLORED_BRANCH = 2: somewhere in that branch is a room that has not been visited
+        #BOSS_NEXT_ROOM = 3: a door to the boss room
+        
         nxt = self.doors[self.room].get(d)
         if nxt is None:
             return WALL
         if nxt == self.boss_room:
             return BOSS_NEXT_ROOM
-        stack, seen = [nxt], {self.room, nxt}       # the floor is a tree: never go back
+        stack, seen = [nxt], {self.room, nxt}   # the floor is a tree: never go back
         while stack:
             room = stack.pop()
             if room not in self.visited:
@@ -178,7 +209,7 @@ class CrawlerV2Env(CrawlerV1Env):
     def _get_obs(self):
         ar, ac = self.agent
         cell = ar * SIZE + ac
-        if not self.enemies:                                   # navigation mode
+        if not self.enemies:    # navigation mode
             labels = [self.door_label(d) for d in range(4)]
             return self.combat_n + int(np.ravel_multi_index(
                 (cell, *labels, int(self.trapdoor_open and self.room == self.boss_room)),
@@ -187,7 +218,7 @@ class CrawlerV2Env(CrawlerV1Env):
         off_r = int(np.clip(er - ar, -2, 2)) + 2
         off_c = int(np.clip(ec - ac, -2, 2)) + 2
         left = self.boss_hp if self.room == self.boss_room else len(self.enemies)
-        hearts = int(np.clip(self.hearts, 1, 3))               # 0 hearts (dead) reads as 1
+        hearts = int(np.clip(self.hearts, 1, 3))    # 0 hearts (dead) reads as 1
         return int(np.ravel_multi_index(
             (cell, off_r * 5 + off_c, self.cooldown, min(left, 3) - 1, hearts - 1),
             self.combat_dims))
@@ -199,15 +230,15 @@ class CrawlerV2Env(CrawlerV1Env):
                 "boss_defeated": self.boss_defeated, "floor_completed": self.floor_completed,
                 "dead": self.hearts <= 0, "exited": False}
 
-    # ------------------------------------------------------------ rendering
+    #RENDERING
     def door_kinds(self):
-        """Per direction N,S,W,E: None (wall), 'door' or 'boss' -- for the renderer."""
+        #Type of doors in each direction N,S,W,E: None (wall), 'door' or 'boss' 
         return [None if d not in self.doors[self.room] else
                 "boss" if self.doors[self.room][d] == self.boss_room else "door"
                 for d in range(4)]
 
     def map_cells(self):
-        """Minimap: visited rooms, plus rooms seen through a door of a visited room."""
+        #Minimap: visited rooms, plus rooms seen through a door of a visited room.
         cells = {}
         for room in self.visited:
             for nxt in self.doors[room].values():

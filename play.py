@@ -1,7 +1,7 @@
 """Play Basement Crawler in a window.
 
-WASD move, arrow keys shoot (like The Binding of Isaac), Space waits,
-R restarts, Esc quits. The game is turn-based: each key press is one step.
+WASD move, arrow keys shoot, Space waits, R restarts, Esc quits. 
+The game is turn-based: each key press is one step.
 Usage: python play.py [Crawler-v1|Crawler-v2]   (default Crawler-v2)
 """
 import sys
@@ -9,7 +9,7 @@ import sys
 import pygame
 import gymnasium as gym
 
-import crawler  # noqa: F401  (registers the Crawler-v* ids)
+import crawler
 
 KEYS = {
     pygame.K_w: 0, pygame.K_s: 1, pygame.K_a: 2, pygame.K_d: 3,              # move
@@ -18,11 +18,12 @@ KEYS = {
 }
 
 env = gym.make(sys.argv[1] if len(sys.argv) > 1 else "Crawler-v2", render_mode="human")
-env.unwrapped.render_hint = True          # show "R: play again" after the episode
+env.unwrapped.render_hint = True    #show "R: play again" after the episode
 obs, info = env.reset()
 total, done = 0.0, False
 
 running = True
+#The UI loop:
 while running:
     event = pygame.event.wait()
     if event.type == pygame.QUIT:

@@ -9,7 +9,8 @@ It shoots tears that travel across the room, searches the floor for the boss roo
 and drops through the trapdoor to the next floor.
 
 **Status:** v1 (one room) is built, tested and learnable. v2 (fixed five-room floor) is
-built and tested, but tabular agents do not solve it yet (see Roadmap). v3 is not started.
+built and tested; SARSA and Expected SARSA complete it in most held-out episodes at 1M
+steps, Q-Learning does not (see `experiments/results/main_comparison.md`). v3 is not started.
 
 **Authors:** _name (email)_, _name (email)_
 
@@ -63,8 +64,38 @@ each key press is one step.
 The top bar shows hearts, enemies left, and the tear cooldown (two dots, both lit when you
 can shoot). Doors are barred until the room is clear, then turn into open doorways.
 
-`smoke_train.py` is only a sanity check. The report experiments use the course's
-SARSA, Expected SARSA and Q-Learning implementations.
+`smoke_train.py` is only a sanity check (it breaks greedy ties with `np.argmax`, which
+always picks action 0 in untrained states). Use `train.py` for experiments.
+
+## Train and evaluate
+
+`train.py` runs SARSA, Expected SARSA or Q-Learning (adapted from the course's `deustorl`
+code; see `crawler/tabular.py` for the differences: no bootstrap on true terminals,
+bootstrap on time-limit truncation, seeded random tie-breaking).
+
+```bash
+python train.py --env Crawler-v1 --algo q_learning --steps 300000 --seed 0 --out runs/demo/v1
+python evaluate.py runs/demo/v1                 # greedy, 1000 held-out seeds (1e9 ...)
+python train.py --env Crawler-v2 --algo sarsa --steps 1000000 --seed 0 --out runs/demo/v2
+python evaluate.py runs/demo/v2
+tensorboard --logdir runs                        # curves: return, success, death, timeout,
+                                                 # rooms visited, boss reached/defeated, ...
+```
+
+Each run directory holds `q.npy`, `config.json` (all settings, seeds, git commit),
+`episodes.csv` (one row per training episode) and TensorBoard events; `evaluate.py` adds
+`eval_<scenario>.json` / `.csv`. Defaults: alpha 0.1, gamma 0.99, epsilon 1.0 -> 0.05
+linearly over the first 70% of steps.
+
+Transfer and curriculum:
+- `--init-from RUN` starts from another run's Q-table: same shape is copied; a
+  Crawler-v1 table is mapped onto Crawler-v2's combat states (`crawler/transfer.py`),
+  navigation states start at 0.
+- `--scenario` picks a smaller Crawler-v2 floor ending at the boss (`crawler/scenarios.py`:
+  `boss_only`, `hard_boss`, `medium_hard_boss`, `full`). Same observation/action encoding.
+- `python experiments/transfer_curriculum.py --tag NAME --total 1000000 --v1-steps 300000`
+  runs scratch vs transfer vs curriculum with equal total budgets, then evaluates and
+  writes `experiments/results/NAME/` (run with `-h` for all options; it resumes).
 
 ## Use it from your own scripts
 
@@ -155,14 +186,20 @@ or reaches 200 steps (truncated).
 ```
 basement-crawler/
 ├── crawler/
-│   ├── __init__.py        # registers Crawler-v1
+│   ├── __init__.py        # registers Crawler-v1 and Crawler-v2
 │   ├── crawler_v1.py      # the v1 environment (rules, observation, rewards)
 │   ├── crawler_v2.py      # v2: fixed five-room floor, rocks, boss, trapdoor
+│   ├── scenarios.py       # smaller v2 floors for curriculum learning
+│   ├── tabular.py         # SARSA / Expected SARSA / Q-Learning updates
+│   ├── transfer.py        # v1 -> v2 Q-table mapping
 │   └── render.py          # pygame graphics (window and video frames)
 ├── play.py                # play in a window
 ├── play_text.py           # play in the terminal
 ├── check_v1.py            # validation checks
-├── tests/                 # pytest unit tests (v1 + v2)
+├── tests/                 # pytest unit tests (envs + RL code)
+├── train.py               # train one stage, save Q-table/config/TensorBoard
+├── evaluate.py            # greedy evaluation on held-out seeds
+├── experiments/           # experiment runners; results/ holds summaries
 ├── smoke_train.py         # quick learnability check, --watch to see it play
 ├── pyproject.toml         # package definition (pip install -e .)
 ├── requirements.txt       # pinned dependency versions
