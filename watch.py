@@ -47,7 +47,8 @@ for ep in range(args.episodes):
             a = int(rng.choice(np.flatnonzero(Q[s] == Q[s].max())))
         s, r, term, trunc, info = env.step(a)
         total, done = total + r, term or trunc
-    print(f"episode {ep + 1}: {'exited' if info['exited'] else 'died' if info['hearts'] <= 0 else 'time up'}, "
+    won = info["exited"] or info.get("floor_completed", False)
+    print(f"episode {ep + 1}: {'won' if won else 'died' if info['hearts'] <= 0 else 'time up'}, "
           f"return {total:+.2f}")
     if not args.record:
         time.sleep(1.0)    # keep the last frame on screen briefly

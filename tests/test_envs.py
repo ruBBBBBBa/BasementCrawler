@@ -131,7 +131,7 @@ def test_v2_room_transition_entry_reward_and_locked_doors():
     env.agent, env.hearts = DOOR_CELLS[0], 2
     _, r, term, _, info = env.step(0)                          # north door of the start room
     assert env.room == A and env.agent == DOOR_CELLS[1] and not term
-    assert r == pytest.approx(-0.01 + 0.5)
+    assert r == pytest.approx(-0.05 + 0.5)
     assert info["hearts"] == 2 and info["rooms_visited"] == 2
     assert len(env.enemies) == 2 and env.tear is None
     for e in env.enemies:
@@ -147,10 +147,10 @@ def test_v2_revisit_gives_no_entry_reward_and_room_stays_clear():
     put(env, A, DOOR_CELLS[1], enemies=[])
     env.cleared_rooms.add(A)
     _, r, *_ = env.step(1)                                     # A -> start (visited)
-    assert env.room == S and r == pytest.approx(-0.01)
+    assert env.room == S and r == pytest.approx(-0.05)
     env.agent = DOOR_CELLS[0]
     _, r, *_ = env.step(0)                                     # start -> A again
-    assert env.room == A and env.cleared and env.enemies == [] and r == pytest.approx(-0.01)
+    assert env.room == A and env.cleared and env.enemies == [] and r == pytest.approx(-0.05)
 
 
 def test_v2_rocks_block_player_tears_and_enemies():
@@ -178,13 +178,13 @@ def test_v2_boss_takes_three_hits_then_trapdoor_completes_floor():
         rewards.append(r)
         env.cooldown = 0
     assert env.boss_defeated and env.enemies == [] and env.cleared
-    assert rewards[:2] == [pytest.approx(-0.01)] * 2
-    assert rewards[2] == pytest.approx(-0.01 + 10 + 2)
+    assert rewards[:2] == [pytest.approx(-0.05)] * 2
+    assert rewards[2] == pytest.approx(-0.05 + 10 + 2)
     _, r, term, _, info = env.step(0)                          # (3, 2)
     assert not term
     _, r, term, _, info = env.step(0)                          # onto the trapdoor
     assert term and info["floor_completed"] and info["boss_defeated"]
-    assert r == pytest.approx(-0.01 + 20)
+    assert r == pytest.approx(-0.05 + 20)
 
 
 def test_v2_trapdoor_closed_while_boss_alive():

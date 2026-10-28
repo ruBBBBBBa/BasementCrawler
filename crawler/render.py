@@ -49,6 +49,7 @@ class Renderer:
         self.font = pygame.font.Font(None, 28)
         self.small = pygame.font.Font(None, 22)
         self.big = pygame.font.Font(None, 48)
+        self.tiny = pygame.font.Font(None, 18)
         self.prev = None    # (agent, n_enemies, hearts) from the previous frame
         self.facing = 0    # direction the hero looks (purely visual)
 
@@ -73,8 +74,13 @@ class Renderer:
         hint = getattr(env, "render_hint", False)
         if hasattr(env, "map_cells"):
             self._minimap(s, env.map_cells(), env.boss_room)
+        if getattr(env, "n_floors", 1) > 1:    # v3: which floor we are on, under the minimap
+            label = self.tiny.render(f"Floor {env.floor + 1}/{env.n_floors}", True, TEXT)
+            s.blit(label, (4, HUD + 62))
         if env.hearts <= 0:
             self._banner(s, "You died", HIT, hint)
+        elif getattr(env, "run_completed", False):
+            self._banner(s, "You escaped!", TEAR, hint)
         elif getattr(env, "floor_completed", False):
             self._banner(s, "Floor complete!", TEAR, hint)
         elif env.exited:
