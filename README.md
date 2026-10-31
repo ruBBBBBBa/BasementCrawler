@@ -1,370 +1,302 @@
-# Basement Crawler (working name)
+# Basement Crawler
 
-A turn-based Gymnasium environment inspired by The Binding of Isaac, built for
-Reinforcement Learning Assignment 1 (Option B) and trained with tabular SARSA,
-Expected SARSA and Q-Learning.
+A turn-based, grid-based dungeon crawler built as a custom **Gymnasium** environment for **Reinforcement Learning — Assignment 1 (Option B: Environment Design)**. The game is inspired by the room progression and combat mechanics of *The Binding of Isaac*, but uses its own discrete rules and Pygame interface.
 
-The agent fights through rooms whose doors stay locked until every enemy is dead.
-It shoots tears that travel across the room, searches the floor for the boss room,
-and drops through the trapdoor to the next floor.
+We developed three versions of the environment and compared three tabular reinforcement learning algorithms: **SARSA**, **Expected SARSA**, and **Q-Learning**.
 
-**Status:** finished. Three versions, each registered as its own Gymnasium ID:
+**Authors:** Rubén García (ruben.garcia.saiz@opendeusto.es) and Aner Junquera (aner.junquera@opendeusto.es).
 
-| Version | What it is | States |
-| --- | --- | --- |
-| `Crawler-v1` | One room, 1–3 chasers | 5,650 |
-| `Crawler-v2` | One fixed five-room floor with a boss and a trapdoor | 29,675 |
-| `Crawler-v3` | Two random floors per run, built with Isaac's floor generator | 20,925 |
+**Project status:** Completed. `Crawler-v3` is the final environment.
 
-First results (one seed each, held-out episodes): all three algorithms solve v1; v2's fixed
-floor is completed in 84–94% of greedy episodes; v3's random floors are learned only
-partly (see "Design notes").
+## 1. Environment overview
 
-**Authors:** _name (email)_, _name (email)_
+The player moves through rooms, defeats enemies by shooting tears, opens doors by clearing each room, and searches for the boss. Defeating a boss opens a trapdoor. In the final version, the agent must complete **two procedurally generated floors** to win.
 
----
+| Version | Main features | Observation states | Episode limit |
+| --- | --- | ---: | ---: |
+| `Crawler-v1` | One 5×5 room with chasing enemies and an exit | 5,650 | 200 steps |
+| `Crawler-v2` | Fixed five-room floor, rocks, boss and trapdoor | 29,675 | 500 steps |
+| `Crawler-v3` | Two procedurally generated floors, room pools and persistent health | 20,925 | 1,000 steps |
 
-## Setup (first time)
+All three environments use `Discrete(9)` actions: four movements, four shooting directions and one wait action.
 
-You need Python 3.10–3.13 and Git. pygame has no build for Python 3.15 yet;
-`mise.toml` pins 3.13.
+### Main mechanics
+
+- **Movement:** move one cell north, south, west or east on a 5×5 room grid.
+- **Combat:** shoot tears in four directions. Tears travel up to four cells, move two cells per step, and have a two-step firing cooldown.
+- **Enemies:** chasing enemies attempt to move toward the player with a default probability of 0.5 per turn. Enemy contact costs one heart; the player starts with three hearts.
+- **Doors:** locked while enemies remain in the current room. Cleared rooms remain cleared when revisited.
+- **Boss:** has three hit points and opens a trapdoor when defeated.
+- **Floors:** v3 generates new room layouts each episode (four rooms on floor 1 and five on floor 2 by default). Health carries over between floors, and each defeated boss restores one heart, up to the starting maximum.
+
+### Observations
+
+The agent receives **one integer observation**, not the rendered image. Its information is compacted into two modes:
+
+- **Combat:** player position, relative position of the nearest enemy, firing cooldown, remaining enemies or boss health, and—in v2/v3—player health.
+- **Navigation:** player position, available doors and whether unexplored branches or a boss lie behind them, plus trapdoor availability.
+
+The v3 navigation representation merges walls and fully explored branches into a single door label, reducing its total observation space to 20,925 states. This keeps the tabular methods manageable but does not represent every detail of the game (such as all enemies, rocks or the current room identity).
+
+### Rewards and episode endings
+
+| Event | Reward |
+| --- | ---: |
+| Enemy defeated | +1 |
+| Room cleared | +2 |
+| Heart lost | −3 |
+| Player death | −10 |
+| Exit reached in v1 | +5 |
+| First visit to a new room in v2/v3 | +0.5 |
+| Boss defeated in v2/v3 | +10 |
+| Floor completed in v2/v3 | +20 |
+| Each step in v1 | −0.01 |
+| Each step in v2/v3 | −0.05 |
+
+An episode ends on death, completion of the version's objective, or the step limit. Success means exiting the room in v1, completing the floor in v2, and completing **both floors** in v3.
+
+## 2. Installation
+
+**Recommended:** Python 3.13 and Git. The repository includes `mise.toml` for Python 3.13 and `requirements.txt` for the Python dependencies, including Gymnasium, NumPy, Pygame and TensorBoard.
 
 ```bash
 git clone https://github.com/ruBBBBBBa/BasementCrawler.git
 cd BasementCrawler
 
 python -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
+source .venv/bin/activate
 
-pip install -r requirements.txt    # exact versions the team uses
-pip install -e .                   # makes `import crawler` work from any folder
-
-python check_v1.py                 # every check should pass
-python -m pytest -q                # unit tests for v1, v2 and v3 (29 tests)
+python -m pip install -r requirements.txt
+python -m pip install -e .
 ```
 
-Activate the virtual environment (`source .venv/bin/activate`) every time you open
-a new terminal for this project.
+On Windows PowerShell, activate the environment with:
 
-## Play
+```powershell
+.venv\Scripts\Activate.ps1
+```
+
+Activate the virtual environment again when opening a new terminal.
+
+To check the installation:
 
 ```bash
-python play.py                     # play v3 (two random floors) in a window (keys below)
-python play.py Crawler-v2          # the fixed five-room floor
-python play.py Crawler-v1          # the one-room v1
-python play_text.py                # v1 in the terminal: w/a/s/d move, i/j/k/l shoot
-python check_v1.py                 # API check, mechanics tests, seeding, random baseline
+python check_v1.py
+python -m pytest -q
 ```
 
-Controls in `play.py` (the same layout as The Binding of Isaac). The game is turn-based:
-each key press is one step.
+## 3. Play the game
+
+Launch the graphical game with:
+
+```bash
+python play.py                # Final version: two random floors
+python play.py Crawler-v2     # Fixed five-room floor
+python play.py Crawler-v1     # Single room
+```
 
 | Key | Action |
 | --- | --- |
-| `W` / `A` / `S` / `D` | Move north / west / south / east |
-| Arrow keys | Shoot in that direction |
-| Space | Wait |
+| `W` / `A` / `S` / `D` | Move up / left / down / right |
+| Arrow keys | Shoot in the corresponding direction |
+| `Space` | Wait one turn |
 | `R` | Restart |
 | `Esc` | Quit |
 
-The top bar shows hearts, enemies left, and the tear cooldown (two dots, both lit when you
-can shoot). Doors are barred until the room is clear, then turn into open doorways.
+Each key press advances the environment by one step. The top bar displays information such as remaining hearts, enemies and the shooting cooldown.
 
-## Train
-
-`train.py` trains SARSA, Expected SARSA and Q-Learning. Every run starts from an all-zero
-Q-table, so nothing carries over between runs.
+A text-based version of v1 is also available:
 
 ```bash
-python train.py --name E1                        # v1: 3 algorithms x 5 seeds, 300k steps each
-python train.py --name V2 --env Crawler-v2       # v2: 3 algorithms x 5 seeds, 1M steps each
-python train.py --name test --algo qlearning --seeds 1 --steps 50000
-python train.py --name E2_hard --hearts 1 --enemy-move-prob 1.0
-python train.py --name V2_old_step --env Crawler-v2 --step-reward -0.01
-python train.py --name V3 --env Crawler-v3 --seeds 3        # v3: random two-floor runs, 10M steps each
-python train.py --name V3_eps --env Crawler-v3 --seeds 3 --eval-eps 0.05   # evaluate with 5% exploration
-python train.py --name V3_fixed --env Crawler-v3 --map-seed 0   # v3 with the same maps every episode
-python train.py --name V3_big --env Crawler-v3 --n-rooms 6 7    # bigger floors (much harder)
-tensorboard --logdir runs                        # then open http://localhost:6006
+python play_text.py
 ```
 
-Each run writes:
-- `runs/<name>/<algo>/seed<n>/`: TensorBoard logs. The settings are under the Text tab.
-- `qtables/<name>/<algo>_seed<n>.npy`: the final Q-table.
-- `qtables/<name>/<algo>_seed<n>.json`: the settings and the final evaluation.
+## 4. Experiments and training
 
-Reusing a name is refused; add `--overwrite` to replace it. Run `python train.py -h`
-for every option.
+We trained SARSA, Expected SARSA and Q-Learning independently, using **three training seeds per algorithm and environment**. Every run starts from a zero-initialised Q-table; the 10-million-step v3 runs are **new training runs**, not continuations of the 2-million-step experiments.
 
-| Setting | Default |
+### Experimental configuration
+
+| Parameter | Value |
 | --- | --- |
-| `--algo` | `all` (or `sarsa`, `expected_sarsa`, `qlearning`) |
-| `--seeds` | 5 |
-| `--steps` | 300k (v1), 1M (v2), 10M (v3) |
-| Learning rate α / discount γ | 0.1 / 0.99 |
-| Exploration ε | 1.0 → 0.05, linearly over the first 70% of steps |
-| Evaluation | Greedy (ε = 0, or `--eval-eps`) on the same 100 held-out episodes, every 10k steps (v1), 50k (v2) or 500k (v3) |
+| Learning rate (`alpha`) | 0.1 |
+| Discount factor (`gamma`) | 0.99 |
+| Exploration policy | Epsilon-greedy |
+| Initial / final epsilon | 1.0 / 0.05 |
+| Epsilon decay | Linear over the first 70% of training |
+| Training seeds | 3 per algorithm |
+| Evaluation | 100 episodes per seed |
+| Evaluation epsilon | 0.0 (greedy) |
+| Evaluation seeds | Fixed, beginning at 10,000,000 |
 
-Update rules:
-- **True terminal** (death, exit, floor completed): no bootstrap, so the target is just the reward.
-- **Time-limit truncation:** bootstraps, because the timeout isn't part of the game.
-- **Ties** between greedy actions are broken at random.
+### Main experiments
 
-The TensorBoard curves that matter most:
-
-| Tag | Shows |
-| --- | --- |
-| `eval/success_rate` | Greedy success on the held-out rooms (main comparison curve) |
-| `eval/death_rate`, `eval/timeout_rate`, `eval/mean_return` | How the greedy agent fails, and its score |
-| `eval/mean_kills_per_episode` (v1), `eval/mean_rooms_visited` (v2), `eval/mean_floors_completed` (v3) | Progress per episode |
-| `train/return`, `train/success_rate`, `train/timeout_rate` | Performance while still exploring |
-| `train/epsilon` | The exploration schedule |
-| `train/states_visited_pct` | Share of the state space seen so far |
-
-## Watch and record a trained agent
+Run these commands from the project root. **Use different `--name` values if the output directories already exist**, to avoid overwriting the original experiments.
 
 ```bash
-python watch.py qtables/V2/sarsa_seed0.npy                            # play it in a window
-python watch.py qtables/V2/sarsa_seed0.npy --record videos/v2_sarsa   # one .mp4 per episode
-python watch.py --random --env Crawler-v2 --record videos/random      # random baseline
+# Crawler-v1: 300,000 steps per algorithm and seed
+python train.py --name v1_main --env Crawler-v1 --algo all --seeds 3 --steps 300000 --eval-every 10000
+
+# Crawler-v2: 1,000,000 steps per algorithm and seed
+python train.py --name v2_main --env Crawler-v2 --algo all --seeds 3 --steps 1000000 --eval-every 50000
+
+# Crawler-v3: initial 2,000,000-step experiment
+python train.py --name v3_main --env Crawler-v3 --algo all --seeds 3 --steps 2000000 --eval-every 200000
+
+# Crawler-v3: independent extended 10,000,000-step experiment
+python train.py --name v3_10m --env Crawler-v3 --algo all --seeds 3 --steps 10000000 --eval-every 500000
 ```
 
-`watch.py` reads the `.json` next to the Q-table, so it opens the same version and settings
-the agent was trained on. It plays rooms the agent never trained on.
+Use `python train.py --help` to inspect the additional options, including enemy movement probability, number of rooms, training algorithm and evaluation exploration.
 
-## Use it from your own scripts
+### Final evaluation results
+
+The following table shows the **mean final greedy success rate across three independent training seeds**. Each seed was evaluated over 100 episodes.
+
+| Environment | SARSA | Expected SARSA | Q-Learning |
+| --- | ---: | ---: | ---: |
+| Crawler-v1 — 300k steps | 99.7% | 100.0% | 100.0% |
+| Crawler-v2 — 1M steps | 85.7% | 91.3% | 84.7% |
+| Crawler-v3 — 2M steps | 15.7% | 14.0% | 8.3% |
+| Crawler-v3 — 10M steps | 25.0% | 37.0% | 9.3% |
+
+All three methods learned v1 almost perfectly and performed well on v2. V3 was substantially harder: the random maps, multiple floors and frequent timeouts made successful navigation less reliable. After 10 million steps, Expected SARSA achieved the highest average success rate among the three algorithms. Results varied between training seeds, particularly on v3, so these findings should not be interpreted as proof of universal superiority.
+
+**Important:** Mean episode returns should be compared **within** a version, not directly between v1, v2 and v3, because their objectives and reward structures differ.
+
+## 5. TensorBoard logs and trained Q-tables
+
+The training script writes the following outputs:
+
+```text
+runs/<experiment>/<algorithm>/seed<n>/
+    TensorBoard event logs
+
+qtables/<experiment>/<algorithm>_seed<n>.npy
+    Final trained Q-table
+
+qtables/<experiment>/<algorithm>_seed<n>.json
+    Run configuration and final evaluation results
+```
+
+To inspect the learning curves:
+
+```bash
+tensorboard --logdir runs
+```
+
+Open <http://localhost:6006> in your browser. Important metrics include:
+
+| TensorBoard tag | Meaning |
+| --- | --- |
+| `eval/success_rate` | Fraction of successful evaluation episodes |
+| `eval/mean_return` | Average evaluation reward |
+| `eval/death_rate` | Fraction of episodes ending in death |
+| `eval/timeout_rate` | Fraction of episodes reaching the step limit |
+| `eval/mean_rooms_visited` | Exploration progress in v2 |
+| `eval/mean_floors_completed` | Progress through the two floors in v3 |
+| `train/epsilon` | Exploration rate during training |
+| `train/states_visited_pct` | Percentage of tabular observations visited |
+
+The figures in the report display means over the three training seeds, individual seed curves and standard-deviation bands. They use mild smoothing for presentation; numerical results are taken from the final unsmoothed evaluations.
+
+**Note:** TensorBoard logs and `.npy` Q-tables may be excluded from Git because they can be large. To reproduce an experiment, run the corresponding training command or use the saved checkpoints supplied separately with the submission.
+
+## 6. Watch and record trained agents
+
+`watch.py` loads a trained Q-table together with the adjacent JSON configuration, so the agent is replayed in the correct environment with the matching settings.
+
+```bash
+# Watch a saved Expected SARSA agent
+python watch.py qtables/v3_10m/expected_sarsa_seed0.npy
+
+# Replay and record a specific episode
+python watch.py qtables/v3_10m/expected_sarsa_seed0.npy \
+  --seed 10000000 --policy-seed 0 \
+  --record videos/v3_demo_alternative --fps 8
+
+# Search for a successful episode and record it
+python watch.py qtables/v3_10m/expected_sarsa_seed0.npy \
+  --find-win --pick shortest --search-limit 100 \
+  --record videos/v3_demo --fps 8
+```
+
+When `--record` is used, the script saves MP4 recordings and a `recording_results.json` file summarising each episode. The `--seed` option controls the environment; `--policy-seed` controls random action tie-breaking. You can use `--random` for a baseline without a Q-table.
+
+### Recorded gameplay demonstrations
+
+The report includes four examples of Expected SARSA playing v3, showing both successful and unsuccessful behaviour:
+
+| Training budget | Episode | Steps | Video |
+| --- | --- | ---: | --- |
+| 2M steps | Timeout after becoming stuck during navigation | 1,000 | [Watch](https://drive.google.com/file/d/1Ur2rUU9vofGABUZxQIUCXw9MVXVdRSDQ/view?usp=drive_link) |
+| 2M steps | Successful completion of two floors | 118 | [Watch](https://drive.google.com/file/d/1KObdH3txqkn2MapzobyclHuR4GttoiSD/view?usp=drive_link) |
+| 10M steps | Fast successful completion | 54 | [Watch](https://drive.google.com/file/d/1GT2MdSXM7EBkt_cSLjWbXVeFPuFqp1Nt/view?usp=drive_link) |
+| 10M steps | Successful but less efficient behaviour | 100 | [Watch](https://drive.google.com/file/d/1laXfnEhSmJmOBo5UbzWtdhef-WZJt2SE/view?usp=drive_link) |
+
+These recordings are **illustrative examples**, not a substitute for the quantitative evaluation across 100 episodes and three training seeds. The shared Drive files must be accessible to anyone with the link for the demonstrations to be viewable by the evaluator.
+
+## 7. Use the environments from Python
 
 ```python
 import gymnasium as gym
-import crawler                      # registers Crawler-v1, Crawler-v2 and Crawler-v3
+import crawler  # Registers Crawler-v1, Crawler-v2 and Crawler-v3
 
 env = gym.make("Crawler-v3")
-obs, info = env.reset(seed=0)       # obs is an int in [0, env.observation_space.n)
-obs, reward, terminated, truncated, info = env.step(env.action_space.sample())
+observation, info = env.reset(seed=0)
+
+action = env.action_space.sample()
+observation, reward, terminated, truncated, info = env.step(action)
+
+env.close()
 ```
 
-Size the Q-table with `env.observation_space.n` and `env.action_space.n` (9 actions).
+The following rendering modes are supported:
 
-Rendering:
-- `render_mode="human"` opens a window that updates every step. Use it to watch a
-  trained agent, never during training, because it slows every step to the frame rate.
-- `render_mode="rgb_array"` returns each frame as an image, with no window, for
-  `gymnasium.wrappers.RecordVideo`.
-- `render_mode="ansi"` returns the room as text.
+- `render_mode="human"`: interactive Pygame window.
+- `render_mode="rgb_array"`: image frames suitable for recording.
+- `render_mode="ansi"`: text representation for debugging.
 
-## Crawler-v1: one room
+Training should be run without the graphical renderer for better performance.
 
-**Actions:** `0-3` move N/S/W/E, `4-7` shoot N/S/W/E, `8` wait.
+## 8. Project structure
 
-**Observation:** `Discrete(5,650)`, one integer.
-- While enemies are alive, it encodes the agent's cell, the nearest enemy's offset
-  (row and column, each clipped to ±2), the tear cooldown, and how many enemies are left.
-- Once the room is clear, it encodes only the agent's cell.
-
-**Episode end:** the agent exits through an open door (success), loses all hearts,
-or reaches 200 steps (truncated).
-
-**`info` keys:** `hearts`, `enemies_left`, `cleared`, `exited`. Success is `exited`.
-
-| Constructor argument | Default | Meaning |
-| --- | --- | --- |
-| `n_enemies` | 3 | Chasers in the room (1-3) |
-| `enemy_move_prob` | 0.5 | Chance each enemy steps toward the agent each turn |
-| `tear_speed` | 2 | Cells a tear moves per step |
-| `tear_range` | 4 | Cells a tear flies before it lands |
-| `fire_delay` | 2 | Steps between shots (changes the observation size) |
-| `hearts` | 3 | Starting health |
-| `render_mode` | None | `"human"` (window), `"rgb_array"` (images, for video) or `"ansi"` (text) |
-
-| Event | Reward |
-| --- | --- |
-| Enemy killed | +1 |
-| Room cleared | +2 |
-| Exit through a door | +5 |
-| Heart lost | −3 |
-| Death | −10 |
-| Each step | −0.01 |
-
-## Crawler-v2: one fixed floor
-
-```
-. . . B .     S start (empty)        A medium: 2 chasers, 4 pillars
-. . A C .     W easy dead end: 1     C hard: 3 chasers, centre rock
-. W S . .     B boss: 3 HP, 2 rocks
-```
-
-`gym.make("Crawler-v2")` (limit 500 steps). The rules are v1's, plus:
-- **Doors.** Walking through an open door moves you to the next room, entering by the
-  opposite door.
-- **Enemies.** They spawn the first time you enter a room (at least 3 cells from you), and
-  the doors lock until they're dead. A cleared room stays clear when you come back.
-- **Hearts** carry over between rooms.
-- **Rocks** (grey) block you, enemies and tears.
-- **The boss** takes 3 hits. Killing it opens a trapdoor in the room centre; stepping onto
-  it completes the floor and ends the episode (v2 has a single floor).
-- **The minimap** (top-left corner) shows visited rooms; the boss door has a red frame.
-
-**Observation:** `Discrete(29,675)`.
-- Combat (enemies alive), 16,875 states: cell, nearest-enemy offset, cooldown, enemies
-  left (boss HP in the boss room), hearts.
-- Navigation (room clear), 12,800 states: cell, a label per door, trapdoor open.
-  The door labels:
-  - `WALL`: no door on that side.
-  - `EXPLORED`: every room behind that door has been visited.
-  - `UNEXPLORED_BRANCH`: some room behind that door, however deep, is unvisited.
-  - `BOSS_NEXT_ROOM`: the door leads straight to the boss. This label takes priority
-    over the others.
-- Not observed: which room you are in, rocks, other enemies, the tear in flight.
-
-**Rewards:** v1's, except:
-- **Each step: −0.05** (the `step_reward` argument; v1 keeps −0.01).
-- First entry into a room: +0.5 (the `enter_reward` argument).
-- Boss killed: +10.
-- Floor completed: +20.
-
-**`info` keys:** v1's plus `room`, `rooms_visited`, `boss_hp`, `boss_defeated`,
-`floor_completed`, `dead`. Success is `floor_completed`.
-
-## Crawler-v3: random floors
-
-`gym.make("Crawler-v3")` (limit 1,000 steps). The rules are v2's, plus:
-- **A new map every episode.** Each floor is built with The Binding of Isaac's floor
-  generator, scaled to a 5×5 grid. Rooms grow outward from the start room in the centre;
-  a new room is skipped if it would touch more than one existing room (so the floor never
-  has loops), if the floor is full, or on a 50% coin flip. The boss goes in the last dead
-  end found, which is one of the rooms furthest from the start, and never next to it.
-- **Room pools.** Every other room gets a layout (enemies and rocks) from a pool:
-  easy (1 chaser), medium (2) or hard (3), each with three rock layouts. Floor 1 draws
-  from easy and medium rooms, floor 2 from medium and hard ones, as Isaac does within a
-  chapter.
-- **Two floors.** The trapdoor on floor 1 drops the agent into the start room of a new,
-  harder floor 2, keeping its hearts. The trapdoor on floor 2 ends the run.
-- **Bosses drop a heart.** Killing a boss restores one heart (up to the maximum).
-- The minimap and a "Floor 1/2" label sit in the top-left corner.
-
-**Observation:** `Discrete(20,925)`. The combat part is v2's (16,875 states). The
-navigation part is compact: on a tree-shaped floor a door marked `EXPLORED` is never worth
-taking, exactly like a wall, so v3 merges the two labels. Each door is "closed",
-"unexplored" or "boss", which cuts the navigation states from 12,800 to 4,050
-(25 cells × 3⁴ door labels × trapdoor open). `compact_nav=False` restores v2's encoding.
-The observation never says which room or floor the agent is in, so one Q-table can play
-maps it has never seen; the door labels are what let it search an unknown floor.
-
-**Rewards:** v2's. Each completed floor gives +20, so a full run can collect two floor
-rewards and two boss rewards.
-
-**`info` keys:** v2's plus `floor`, `n_floors`, `floors_completed`, `run_completed`.
-Success is `run_completed`.
-
-| Constructor argument | Default | Meaning |
-| --- | --- | --- |
-| `n_rooms` | `(4, 5)` | Rooms per floor, including the start and boss rooms (one number for every floor, or one per floor; 3–10) |
-| `n_floors` | 2 | Floors per run (later floors use floor 2's pools and the last room count) |
-| `boss_heal` | 1 | Hearts restored when a boss dies |
-| `map_seed` | None | Set it to play the same maps every episode (debugging, comparisons) |
-| `compact_nav` | True | Merge `WALL` and `EXPLORED` door labels (False = v2's encoding) |
-
-Plus all of v2's arguments (`hearts`, `enemy_move_prob`, `step_reward`, `enter_reward`, ...).
-
-## Design notes
-
-**Why v2 uses a −0.05 step reward.** With −0.01, timeouts that bootstrap and γ = 0.99,
-hiding forever in a cleared room cost at most −1 in discounted terms, while a single hit
-costs −3.
-- **What went wrong:** Q-Learning learned to clear the easy dead-end room and then wander
-  there until the time limit (0% success in every run). SARSA also collapsed on some seeds
-  in long runs.
-- **The fix:** at −0.05, stalling forever costs −5. SARSA improved, and Q-Learning started
-  completing the floor.
-- **Side effect:** a full 500-step timeout now totals −25, which is lower than dying
-  (−19 from 3 lost hearts plus death). Deaths did not increase in our tests.
-
-**v3: random floors are much harder for tabular methods.** On the same maps every
-episode (`--map-seed 0`), SARSA completes both floors in 61% of greedy episodes after 3M
-steps. On new random maps every episode it learns far less (one seed each, 200 held-out
-runs, 10M steps):
-
-| Algorithm | Greedy: full run / floors done / timeout | ε = 0.05: full run / floors done / timeout |
-| --- | --- | --- |
-| SARSA | 6% / 0.40 / 92% | 23% / 0.82 / 64% |
-| Q-Learning | 10% / 0.55 / 80% | 26% / 1.08 / 24% |
-
-- **What goes wrong:** the greedy agent gets stuck in a cleared room, repeating an action
-  that changes nothing (walking into a wall or rock, or shooting at an empty room). With
-  random maps, what lies behind each door varies a lot, so the navigation Q-values end up
-  almost equal and the greedy choice can be a no-op that repeats forever. The 5% random
-  actions of ε = 0.05 break most of these loops.
-- **What helped:** merging the `WALL` and `EXPLORED` labels (`compact_nav`), smaller
-  floors (4 and 5 rooms) and longer training. On floors of 6 and 7 rooms, greedy success
-  stays near 0% even after 10M steps.
-- **What did not help (tested, then removed):** a larger step cost, γ = 0.995, making the
-  time limit a loss, hearts dropped by cleared rooms, a pessimistic initial Q-value of −5,
-  and potential-based shaping towards the nearest useful door.
-- **Why it matters:** the observation tells the agent which door to take, but a Q-table
-  has no way to share what it learns between similar situations. Function approximation
-  (Unit 2) is the usual answer.
-
-**Tried and dropped: transfer from v1.** We pretrained on v1 (300k steps), copied its
-combat Q-values into v2's combat states, and continued on v2.
-- **Result:** with the same amount of v2 training it did worse than training from
-  scratch, and timeouts roughly doubled.
-- **Likely cause:** the copied values kept their v1 meaning (a cleared room is followed by
-  +5 and the end of the episode), so in v2, finishing a room looked like losing value.
-- **Status:** the code was removed; the results are described in the report.
-
-## Project layout
-
-```
+```text
 BasementCrawler/
 ├── crawler/
-│   ├── __init__.py        # registers Crawler-v1 and Crawler-v2
-│   ├── crawler_v1.py      # v1: one room (rules, observation, rewards)
-│   ├── crawler_v2.py      # v2: fixed five-room floor, rocks, boss, trapdoor
-│   ├── crawler_v3.py      # v3: random floors (Isaac's generator), room pools, two floors
-│   └── render.py          # pygame graphics (window and video frames)
-├── tests/
-│   ├── test_envs.py       # pytest unit tests for the v1 and v2 environments
-│   └── test_v3.py         # pytest unit tests for v3 (generator, pools, floors)
-├── outputs/smoke/         # screenshots of v2
-├── play.py                # play in a window
-├── play_text.py           # play v1 in the terminal
-├── check_v1.py            # v1 validation checks
-├── train.py               # SARSA / Expected SARSA / Q-Learning with TensorBoard
-├── watch.py               # watch or record a saved Q-table
-├── pyproject.toml         # package definition (pip install -e .)
-├── requirements.txt       # pinned dependency versions
-├── mise.toml              # pins Python 3.13
+│   ├── __init__.py          # Gymnasium registration for v1, v2 and v3
+│   ├── crawler_v1.py        # Single-room environment
+│   ├── crawler_v2.py        # Fixed five-room floor
+│   ├── crawler_v3.py        # Procedurally generated two-floor environment
+│   └── render.py            # Pygame graphics and video frames
+├── tests/                   # Environment and mechanics tests
+├── play.py                  # Graphical gameplay
+├── play_text.py             # Text-mode gameplay for v1
+├── check_v1.py              # Basic environment checks
+├── train.py                 # Tabular algorithms, evaluation and logging
+├── watch.py                 # Replay and record trained agents
+├── requirements.txt         # Python dependencies
+├── pyproject.toml           # Package configuration
+├── mise.toml                # Python version configuration
 └── README.md
 ```
 
-## Working together
+Generated folders such as `runs/`, `qtables/` and `videos/` are created when experiments and recordings are run; they may not be present in a fresh clone.
 
-```bash
-git pull                              # always start from the latest main
-git switch -c report-experiments     # one branch per piece of work
-# ...edit, then run python check_v1.py and python -m pytest -q...
-git add .
-git commit -m "Add v3 experiment results"
-git push -u origin report-experiments # then open a pull request on GitHub
-```
+## 9. Main observations and limitations
 
-- Merge into `main` only through pull requests, and only code that passes the checks.
-- Adding a package? Run `pip install <package>`, then
-  `pip freeze --exclude-editable > requirements.txt`, and commit `requirements.txt`.
-- Keep TensorBoard logs (`runs/`), videos (`videos/`), Q-tables (`qtables/`, `*.npy`) and
-  the virtual environment out of Git; `.gitignore` already covers them for `.venv/`.
-  If your environment folder has another name, add it to `.gitignore`. Share results
-  through Drive.
+The progression from v1 to v3 made it possible to examine how tabular agents behave as an environment becomes more difficult. In v2, the fixed room layout helps agents repeatedly encounter similar navigation situations. In v3, the map changes between episodes, and the agent must complete two floors within a fixed step limit.
 
-## Versions
+The v3 recordings show that an agent may survive combat and even complete one floor, but later become stuck in a cleared room or take inefficient routes. The compact observation representation makes the Q-table feasible, although it does not capture every part of the game state. Most unsuccessful episodes in the extended v3 experiments ended in **timeout rather than death**.
 
-| Version | Adds | States | Done |
-| --- | --- | --- | --- |
-| v1: one room | 1-3 chasers, travelling tears, doors that open when the room is clear | 5,650 | 20 Oct |
-| v2: fixed floor | Five rooms, rocks, boss with 3 hit points, trapdoor, hearts carried between rooms, door labels | 29,675 | 21 Oct |
-| v3: random floors | Isaac's floor generator, dead ends, 2 floors, easy/medium/hard room pools, boss heart drop | 29,675 | 27 Oct |
+The results demonstrate both the usefulness of tabular methods on manageable tasks and their limitations in more varied, procedurally generated environments. Further analysis is provided in the accompanying PDF report.
 
-Each version is registered as its own ID (`Crawler-v1`, `Crawler-v2`, `Crawler-v3`), so
-earlier versions keep working and can be compared.
+## 10. Reproducibility and submission notes
 
-Assignment deadline: **2 Nov 2026, 23:59.**
+- The repository contains the environment implementation, training and evaluation scripts, graphical interface and tests.
+- Exact training settings and final evaluations are saved beside the generated Q-tables in JSON files and recorded in TensorBoard.
+- The main experiments use three independent training seeds. The 2M and 10M v3 experiments were trained independently from zero-initialised Q-tables.
+- The precise version used for the submitted report should be identified by its Git commit hash (`git rev-parse HEAD`).
+- Before submission, run `python check_v1.py`, `python -m pytest -q`, and check that the PDF video links are accessible.
+
+**Assignment deadline:** 2 November 2026, 23:59 (Europe/Madrid).
